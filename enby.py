@@ -69,15 +69,41 @@ def run_sparql_query(query: str) -> List[Dict[str, str]]:
     ]
 
 
-# Function to fill table columns with data from specific language Wikipedia
-def fill_table_columns(
-    category: str, lang: str, articles: List[str], table_data: Dict[str, Dict[str, str]]
-) -> None:
-    """Fill table columns with data from a specific language Wikipedia."""
-    for article in articles:
-        if article not in table_data:
-            table_data[article] = {"en": "", "de": "", "wikidata": ""}
-        table_data[article][lang] = "non-binary"
+def url2qid(url: str):
+    return url[31:]
+
+
+def fetch_missing_wikidata_info(
+    lang_code: str, missing_titles: List[str]
+) -> List[Dict[str, str]]:
+    """Fetch Wikidata information for missing articles."""
+    titles_str = " ".join(
+        f'"{title.replace('"', '\\"')}"@{lang_code}' for title in missing_titles
+    )
+    query = f"""
+    SELECT DISTINCT ?item ?itemLabel ?itemDescription ?gender ?genderLabel ?dewiki ?enwiki WHERE {{
+      VALUES ?enwiki {{ {titles_str} }}
+      ?item ^schema:about ?article .
+      ?article schema:isPartOf <https://{lang_code}.wikipedia.org/>;
+              schema:name ?enwiki .
+      OPTIONAL {{
+        ?item wdt:P21 ?gender .
+      }}
+      OPTIONAL {{
+        ?item ^schema:about ?article .
+        ?article schema:isPartOf <https://en.wikipedia.org/>;
+                 schema:name ?enwiki .
+      }}
+      OPTIONAL {{
+        ?item ^schema:about ?articlede .
+        ?articlede schema:isPartOf <https://de.wikipedia.org/>;
+                   schema:name ?dewiki .
+      }}
+      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "[AUTO_LANGUAGE],mul,en". }}
+    }}
+    """
+    print(query)
+    return run_sparql_query(query)
 
 
 # Function to generate comparison table and save as HTML
@@ -87,45 +113,51 @@ def collate(
     wikidata_results: List[Dict[str, str]],
 ) -> None:
     """Generate and print a table comparing category and Wikidata articles, and save as HTML."""
-    category_set_en = set(category_articles_en)
-    category_set_de = set(category_articles_de)
-    wikidata_set = {result.get("enwiki", "") for result in wikidata_results}
-
-    gender_map = {
-        result.get("enwiki", ""): result.get("genderLabel", "")
-        for result in wikidata_results
-    }
-    enwiki_map = {
-        result.get("enwiki", ""): result.get("enwiki", "")
-        for result in wikidata_results
-    }
-    dewiki_map = {
-        result.get("enwiki", ""): result.get("dewiki", "")
-        for result in wikidata_results
-    }
-
-    all_titles = sorted(category_set_en | category_set_de | wikidata_set)
-
-    table_data = {}
-    for title in all_titles:
-        en_status = (
-            "non-binary"
-            if title in category_set_en
-            else ("-" if not enwiki_map.get(title) else "wrong gender?")
-        )
-        de_status = (
-            "non-binary"
-            if title in category_set_de
-            else ("-" if not dewiki_map.get(title) else "wrong gender?")
-        )
-        wikidata_status = gender_map.get(title, "")
-        table_data[title] = {
-            "en": en_status,
-            "de": de_status,
-            "wikidata": wikidata_status,
+    results = []
+    for wdr in wikidata_results:
+        qid = url2qid(wdr["enby"])
+        wikidata_name = wdr.get("enbyLabel", qid)
+        dewiki = wdr.get("dewiki")
+        enwiki = wdr.get("enwiki")
+        data = {
+            "qid": qid,
+            "wikidata_gender": wdr["genderLabel"],
+            "wikidata_name": wikidata_name,
+            "enwiki_name": enwiki,
+            "dewiki_name": dewiki,
         }
+        if dewiki:
+            data["dewiki_gender"] = (
+                "non-binary" if dewiki in category_articles_de else "wrong gender?"
+            )
+        if enwiki:
+            data["enwiki_gender"] = (
+                "non-binary" if enwiki in category_articles_en else "wrong gender?"
+            )
+        if dewiki or enwiki:
+            results.append(data)
 
-    return table_data
+    en_in_wd = set(v.get("enwiki") for v in wikidata_results)
+    de_in_wd = set(v.get("dewiki") for v in wikidata_results)
+    set_en = set(category_articles_en)
+    set_de = set(category_articles_de)
+    missing_in_wd = (set_en - en_in_wd) | (set_de - de_in_wd)
+
+    for name in missing_in_wd:
+        data = {"wikidata_gender": "wrong gender?"}
+        if name in set_de:
+            data["dewiki_name"] = name
+            data["dewiki_gender"] = "non-binary"
+        else:
+            data["dewiki_gender"] = "?"
+        if name in set_en:
+            data["enwiki_name"] = name
+            data["enwiki_gender"] = "non-binary"
+        else:
+            data["enwiki_gender"] = "?"
+        results.append(data)
+
+    return results
 
 
 def generate_comparison_table(
@@ -133,7 +165,16 @@ def generate_comparison_table(
     output_html_file: str = "comparison_table.html",
 ):
     # Print ASCII table
-    table = [[k, v["en"], v["de"], v["wikidata"]] for k, v in table_data.items()]
+    table = [
+        [
+            v.get("wikidata_name") or v.get("enwiki_name") or v.get("dewiki_name"),
+            v.get("enwiki_gender") or "-",
+            v.get("dewiki_gender") or "-",
+            v.get("wikidata_gender"),
+        ]
+        for v in table_data
+    ]
+    table = sorted(table, key=lambda s: s[0] or "")
     print(
         tabulate(
             table,
@@ -195,6 +236,8 @@ def generate_comparison_table(
                     class_name = "missing"
                 elif cell == "wrong gender?":
                     class_name = "wrong"
+                elif cell == "?":
+                    class_name = "unknown"
                 elif cell != "":
                     class_name = "nonbinary"
             html_page += f"<td class='{class_name}'>{cell}</td>"
