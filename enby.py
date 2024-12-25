@@ -5,12 +5,26 @@ from typing import Dict, List
 import numpy as np
 import pandas as pd
 import requests
+from pandas.core.reshape.api import merge
 from tabulate import tabulate
 
 # Constants
 PETS_CAN_URL = "https://petscan.wmflabs.org/"
 WIKIDATA_SPARQL_ENDPOINT = "https://query.wikidata.org/sparql"
 WIKIPEDIA_API_URL_TEMPLATE = "https://{lang}.wikipedia.org/w/api.php"
+
+LANG_CODES = {
+    "en": "English",
+    "de": "German",
+    "fr": "French",
+    "es": "Spanish",
+}
+CATEGORIES = {
+    "en": "Non-binary_people",
+    "de": "Nichtbinäre_Person",
+    "fr": "Personnalité_non_binaire",
+    "es": "Personas no binarias",
+}
 
 
 def get_articles_from_category(
@@ -140,33 +154,30 @@ def fetch_missing_wikidata_info(
 
 # Function to generate comparison table and save as HTML
 def collate(
-    category_articles_en: List[Dict[str, str]],
-    category_articles_de: List[Dict[str, str]],
     wikidata_results: List[Dict[str, str]],
+    wikis: Dict[str, List[Dict[str, str]]],
 ) -> None:
     """Generate and print a table comparing category and Wikidata articles, and save as HTML."""
     wd_df = pd.DataFrame.from_dict(wikidata_results)
 
     # Replace wikidata-url by qid column
     wd_df["qid"] = wd_df["enby"].apply(url2qid)
-    wd_df = wd_df.drop(columns=["enby"])
+    wd_df.drop(columns=["enby"], inplace=True)
 
-    wd_df = wd_df.rename(
+    wd_df.rename(
         columns={
             "enbyLabel": "wikidata",
             "enbyDescription": "description",
             "genderLabel": "wikidata_gender",
-        }
+        },
+        inplace=True,
     )
 
-    de_df = pd.DataFrame.from_dict(category_articles_de)
-    en_df = pd.DataFrame.from_dict(category_articles_en)
-    merged = pd.merge(
-        pd.merge(wd_df, de_df, on=["qid", "dewiki"], how="outer"),
-        en_df,
-        on=["qid", "enwiki"],
-        how="outer",
-    )
+    merged = wd_df
+    for projectname, data in wikis.items():
+        df = pd.DataFrame.from_dict(data)
+        merged = merged.merge(df, on=["qid", projectname], how="outer")
+
     merged.fillna(np.nan, inplace=True)
     merged.replace([np.nan], [None], inplace=True)
 
@@ -217,7 +228,14 @@ def generate_comparison_table(
 <h1>Comparison Table</h1>
 <table>
 <thead>
-<tr><th>Title</th><th>English Wikipedia</th><th>German Wikipedia</th><th>Wikidata</th></tr>
+<tr>
+    <th>Title</th>
+"""
+    for lang in LANG_CODES.keys():
+        html_page += f"<th>{LANG_CODES[lang]} Wikipedia</th>"
+    html_page += """
+    <th>Wikidata</th>
+</tr>
 </thead>
 """
 
@@ -225,7 +243,8 @@ def generate_comparison_table(
         html_page += "<tr>"
         name = row.get("wikidata") or row.get("enwiki") or row.get("dewiki")
         html_page += f"<td>{name}</td>"
-        for project in ["enwiki", "dewiki"]:
+        for lang in LANG_CODES.keys():
+            project = f"{lang}wiki"
             site = row.get(f"{project}")
             gender = row.get(f"{project}_gender")
             if not site:
@@ -260,17 +279,16 @@ def generate_comparison_table(
 
 # Main program
 if __name__ == "__main__":
-    # English Wikipedia category
-    articles_en = get_articles_from_category("Non-binary people", lang="en")
-    print(f"Articles in English category: {len(articles_en)}")
-
-    # German Wikipedia category
-    articles_de = get_articles_from_category("Nichtbinäre Person", lang="de")
-    print(f"Articles in German category: {len(articles_de)}")
+    # Wikipedia categories
+    wikipedia = {}
+    for lang in LANG_CODES.keys():
+        projectname = f"{lang}wiki"
+        wikipedia[projectname] = get_articles_from_category(CATEGORIES[lang], lang=lang)
+        print(f"Articles in {LANG_CODES[lang]} category: {len(wikipedia[projectname])}")
 
     # Wikidata query
     wikidata_query = """
-    SELECT DISTINCT ?enby ?enbyLabel ?enbyDescription (group_concat(distinct ?genderLabel;separator=", ") as ?wikidata_gender) ?dewiki ?enwiki WHERE {
+    SELECT DISTINCT ?enby ?enbyLabel ?enbyDescription (group_concat(distinct ?genderLabel;separator=", ") as ?wikidata_gender) ?dewiki ?enwiki ?frwiki ?eswiki WHERE {
       ?enby wdt:P31 wd:Q5 .
       ?enby wdt:P21/wdt:P279* wd:Q48270 .
       ?enby wdt:P21 ?gender .
@@ -284,12 +302,27 @@ if __name__ == "__main__":
         ?articlede schema:isPartOf <https://de.wikipedia.org/>;
                    schema:name ?dewiki .
       }
+      OPTIONAL {
+        ?enby ^schema:about ?articlefr .
+        ?articlefr schema:isPartOf <https://fr.wikipedia.org/>;
+                   schema:name ?frwiki .
+      }
+      OPTIONAL {
+        ?enby ^schema:about ?articlees .
+        ?articlees schema:isPartOf <https://es.wikipedia.org/>;
+                   schema:name ?eswiki .
+      }
       SERVICE wikibase:label { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],mul,en". }
         ?gender rdfs:label ?genderLabel FILTER (lang(?genderLabel) = "en") .
-    } group by ?enby ?enbyLabel ?enbyDescription ?dewiki ?enwiki
+    } group by ?enby ?enbyLabel ?enbyDescription ?dewiki ?enwiki ?frwiki ?eswiki
     """
     sparql_results = run_sparql_query(wikidata_query)
     print(f"SPARQL results: {len(sparql_results)}")
 
     # Generate and print the comparison table
-    generate_comparison_table(collate(articles_en, articles_de, sparql_results))
+    generate_comparison_table(
+        collate(
+            sparql_results,
+            wikipedia,
+        )
+    )
