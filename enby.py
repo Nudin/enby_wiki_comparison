@@ -194,6 +194,7 @@ def generate_comparison_table(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="sort.js"></script>
 <title>Comparison Table</title>
 <style>
     body {
@@ -222,10 +223,27 @@ def generate_comparison_table(
     .wrong {
         background-color: lightcoral;
     }
+    .hidden{
+        display: none;
+    }
+    th {
+        cursor: pointer;
+        background-color: #f9f9f9;
+    }
+    th.sorted-asc::after {
+        content: " ▲";
+    }
+    th.sorted-desc::after {
+        content: " ▼";
+    }
 </style>
 </head>
 <body>
 <h1>Comparison Table</h1>
+<p>Non-binary people on Wikipedia and Wikidata</p>
+<p>Green: Non-binary, Grey: No article, Red: Binary gender (likely Wrong?)</p>
+<p>Click on the column headers to sort the table</p>
+<input type="checkbox" id="filterCheckbox">Show only potential errors</input>
 <table>
 <thead>
 <tr>
@@ -240,34 +258,53 @@ def generate_comparison_table(
 """
 
     for idx, row in table_data.iterrows():
-        html_page += "<tr>"
-        name = row.get("wikidata") or row.get("enwiki") or row.get("dewiki")
-        html_page += f"<td>{name}</td>"
+        error = False
+
+        # Start building the row
+        keys = ["wikidata"] + [f"{lang}wiki" for lang in LANG_CODES.keys()]
+        name = next((row.get(key) for key in keys if row.get(key)), None)
+        row_html = f""
+
+        row_html += f"<td>{name}</td>"
+
         for lang in LANG_CODES.keys():
             project = f"{lang}wiki"
             site = row.get(f"{project}")
             gender = row.get(f"{project}_gender")
+
             if not site:
                 cell = "no article"
                 class_name = "missing"
             elif not gender:
                 cell = "wrong gender?"
                 class_name = "wrong"
+                error = True
             else:
                 cell = gender
                 class_name = "nonbinary"
-            html_page += f"<td class='{class_name}'>{cell}</td>"
+
+            row_html += f"<td class='{class_name}'>{cell}</td>"
+
         # Wikidata is different
         site = row.get(f"wikidata")
         gender = row.get(f"wikidata_gender")
+
         if not site or not gender:
             cell = "wrong gender?"
             class_name = "wrong"
+            error = True
         else:
             cell = gender
             class_name = "nonbinary"
-        html_page += f"<td class='{class_name}'>{cell}</td>"
-        html_page += "</tr>"
+
+        row_html += f"<td class='{class_name}'>{cell}</td>"
+
+        # Close the row with a conditional class if error is true
+        row_class = "error" if error else ""
+        row_html = f"<tr class='{row_class}'>{row_html}</tr>"
+
+        # Append the row to the full HTML table
+        html_page += row_html
 
     html_page += """</table>
 </body>
