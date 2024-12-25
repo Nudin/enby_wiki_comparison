@@ -2,6 +2,8 @@
 
 from typing import Dict, List
 
+import numpy as np
+import pandas as pd
 import requests
 from tabulate import tabulate
 
@@ -11,24 +13,54 @@ WIKIDATA_SPARQL_ENDPOINT = "https://query.wikidata.org/sparql"
 WIKIPEDIA_API_URL_TEMPLATE = "https://{lang}.wikipedia.org/w/api.php"
 
 
-# Function to get articles from a Wikipedia category using PetScan
 def get_articles_from_category(
     category: str, lang: str = "en", depth: int = 10
-) -> List[str]:
+) -> List[Dict[str, str]]:
     """Fetch all article titles from a Wikipedia category including subcategories using PetScan."""
     params = {
         "language": lang,
         "project": "wikipedia",
         "categories": category,
         "depth": depth,
-        "format": "plain",
-        "ns[0]": "1",
-        "doit": "1",
+        "format": "json",
+        "ns[0]": 1,  # Namespace parameter
+        "doit": "1",  # Execute the query
+        "wikidata_item": "any",
+        "common_wiki": "auto",
     }
-    response = requests.get(PETS_CAN_URL, params=params, timeout=180)
-    if response.status_code != 200:
-        raise ValueError(f"Error: Received status code {response.status_code}")
-    return response.text.strip().split("\n") if response.text else []
+    project = f"{lang}wiki"
+
+    try:
+        # Make the request to the Petscan API
+        response = requests.get(PETS_CAN_URL, params=params, timeout=180)
+        response.raise_for_status()
+
+        # Parse the JSON response
+        data = response.json()
+
+        # Navigate to results in the nested structure
+        results = []
+        if "*" in data:
+            for page in data["*"][0]["a"]["*"]:
+                wikidata = page.get("metadata", {}).get("wikidata")
+                title = page.get("title")
+                if wikidata and title:
+                    results.append(
+                        {
+                            "qid": wikidata,
+                            project: title.replace("_", " "),
+                            f"{project}_gender": "non-binary",
+                        }
+                    )
+
+        return results
+
+    except requests.RequestException as e:
+        print(f"Error during request: {e}")
+        return []
+    except json.JSONDecodeError as e:
+        print(f"Error parsing JSON response: {e}")
+        return []
 
 
 # Function to get Wikidata IDs for given Wikipedia pages
@@ -108,81 +140,43 @@ def fetch_missing_wikidata_info(
 
 # Function to generate comparison table and save as HTML
 def collate(
-    category_articles_en: List[str],
-    category_articles_de: List[str],
+    category_articles_en: List[Dict[str, str]],
+    category_articles_de: List[Dict[str, str]],
     wikidata_results: List[Dict[str, str]],
 ) -> None:
     """Generate and print a table comparing category and Wikidata articles, and save as HTML."""
-    results = []
-    for wdr in wikidata_results:
-        qid = url2qid(wdr["enby"])
-        wikidata_name = wdr.get("enbyLabel", qid)
-        dewiki = wdr.get("dewiki")
-        enwiki = wdr.get("enwiki")
-        data = {
-            "qid": qid,
-            "wikidata_gender": wdr["genderLabel"],
-            "wikidata_name": wikidata_name,
-            "enwiki_name": enwiki,
-            "dewiki_name": dewiki,
+    wd_df = pd.DataFrame.from_dict(wikidata_results)
+
+    # Replace wikidata-url by qid column
+    wd_df["qid"] = wd_df["enby"].apply(url2qid)
+    wd_df = wd_df.drop(columns=["enby"])
+
+    wd_df = wd_df.rename(
+        columns={
+            "enbyLabel": "wikidata",
+            "enbyDescription": "description",
+            "genderLabel": "wikidata_gender",
         }
-        if dewiki:
-            data["dewiki_gender"] = (
-                "non-binary" if dewiki in category_articles_de else "wrong gender?"
-            )
-        if enwiki:
-            data["enwiki_gender"] = (
-                "non-binary" if enwiki in category_articles_en else "wrong gender?"
-            )
-        if dewiki or enwiki:
-            results.append(data)
+    )
 
-    en_in_wd = set(v.get("enwiki") for v in wikidata_results)
-    de_in_wd = set(v.get("dewiki") for v in wikidata_results)
-    set_en = set(category_articles_en)
-    set_de = set(category_articles_de)
-    missing_in_wd = (set_en - en_in_wd) | (set_de - de_in_wd)
+    de_df = pd.DataFrame.from_dict(category_articles_de)
+    en_df = pd.DataFrame.from_dict(category_articles_en)
+    merged = pd.merge(
+        pd.merge(wd_df, de_df, on=["qid", "dewiki"], how="outer"),
+        en_df,
+        on=["qid", "enwiki"],
+        how="outer",
+    )
+    merged.fillna(np.nan, inplace=True)
+    merged.replace([np.nan], [None], inplace=True)
 
-    for name in missing_in_wd:
-        data = {"wikidata_gender": "wrong gender?"}
-        if name in set_de:
-            data["dewiki_name"] = name
-            data["dewiki_gender"] = "non-binary"
-        else:
-            data["dewiki_gender"] = "?"
-        if name in set_en:
-            data["enwiki_name"] = name
-            data["enwiki_gender"] = "non-binary"
-        else:
-            data["enwiki_gender"] = "?"
-        results.append(data)
-
-    return results
+    return merged
 
 
 def generate_comparison_table(
     table_data,
     output_html_file: str = "comparison_table.html",
 ):
-    # Print ASCII table
-    table = [
-        [
-            v.get("wikidata_name") or v.get("enwiki_name") or v.get("dewiki_name"),
-            v.get("enwiki_gender") or "-",
-            v.get("dewiki_gender") or "-",
-            v.get("wikidata_gender"),
-        ]
-        for v in table_data
-    ]
-    table = sorted(table, key=lambda s: s[0] or "")
-    print(
-        tabulate(
-            table,
-            headers=["Title", "English Wikipedia", "German Wikipedia", "Wikidata"],
-            tablefmt="grid",
-        )
-    )
-
     # Write HTML page with styled table
     html_page = """<!DOCTYPE html>
 <html lang="en">
@@ -227,20 +221,33 @@ def generate_comparison_table(
 </thead>
 """
 
-    for row in table:
+    for idx, row in table_data.iterrows():
         html_page += "<tr>"
-        for i, cell in enumerate(row):
-            class_name = ""
-            if i > 0:  # English or German Wikipedia columns
-                if cell == "-":
-                    class_name = "missing"
-                elif cell == "wrong gender?":
-                    class_name = "wrong"
-                elif cell == "?":
-                    class_name = "unknown"
-                elif cell != "":
-                    class_name = "nonbinary"
+        name = row.get("wikidata") or row.get("enwiki") or row.get("dewiki")
+        html_page += f"<td>{name}</td>"
+        for project in ["enwiki", "dewiki"]:
+            site = row.get(f"{project}")
+            gender = row.get(f"{project}_gender")
+            if not site:
+                cell = "no article"
+                class_name = "missing"
+            elif not gender:
+                cell = "wrong gender?"
+                class_name = "wrong"
+            else:
+                cell = gender
+                class_name = "nonbinary"
             html_page += f"<td class='{class_name}'>{cell}</td>"
+        # Wikidata is different
+        site = row.get(f"wikidata")
+        gender = row.get(f"wikidata_gender")
+        if not site or not gender:
+            cell = "wrong gender?"
+            class_name = "wrong"
+        else:
+            cell = gender
+            class_name = "nonbinary"
+        html_page += f"<td class='{class_name}'>{cell}</td>"
         html_page += "</tr>"
 
     html_page += """</table>
@@ -263,7 +270,7 @@ if __name__ == "__main__":
 
     # Wikidata query
     wikidata_query = """
-    SELECT DISTINCT ?enby ?enbyLabel ?enbyDescription ?gender ?genderLabel ?dewiki ?enwiki WHERE {
+    SELECT DISTINCT ?enby ?enbyLabel ?enbyDescription (group_concat(distinct ?genderLabel;separator=", ") as ?wikidata_gender) ?dewiki ?enwiki WHERE {
       ?enby wdt:P31 wd:Q5 .
       ?enby wdt:P21/wdt:P279* wd:Q48270 .
       ?enby wdt:P21 ?gender .
@@ -278,7 +285,8 @@ if __name__ == "__main__":
                    schema:name ?dewiki .
       }
       SERVICE wikibase:label { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],mul,en". }
-    }
+        ?gender rdfs:label ?genderLabel FILTER (lang(?genderLabel) = "en") .
+    } group by ?enby ?enbyLabel ?enbyDescription ?dewiki ?enwiki
     """
     sparql_results = run_sparql_query(wikidata_query)
     print(f"SPARQL results: {len(sparql_results)}")
