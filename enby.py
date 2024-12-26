@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 
+import json
 from typing import Dict, List
 
 import numpy as np
 import pandas as pd
 import requests
-from pandas.core.reshape.api import merge
-from tabulate import tabulate
 
 # Constants
 PETS_CAN_URL = "https://petscan.wmflabs.org/"
@@ -253,7 +252,7 @@ def generate_comparison_table(
 <tr>
     <th>Title</th>
 """
-    for lang in LANG_CODES.keys():
+    for lang in LANG_CODES:
         html_page += f"<th>{LANG_CODES[lang]} Wikipedia</th>"
     html_page += """
     <th>Wikidata</th>
@@ -263,17 +262,17 @@ def generate_comparison_table(
 
     error_count = 0
     error_row_count = 0
-    for idx, row in table_data.iterrows():
+    for _, row in table_data.iterrows():
         error = False
 
         # Start building the row
-        keys = ["wikidata"] + [f"{lang}wiki" for lang in LANG_CODES.keys()]
+        keys = ["wikidata"] + [f"{lang}wiki" for lang in LANG_CODES]
         name = next((row.get(key) for key in keys if row.get(key)), None)
         row_html = f""
 
         row_html += f"<td>{name}</td>"
 
-        for lang in LANG_CODES.keys():
+        for lang in LANG_CODES:
             project = f"{lang}wiki"
             site = row.get(f"{project}")
             gender = row.get(f"{project}_gender")
@@ -291,14 +290,15 @@ def generate_comparison_table(
                 class_name = "nonbinary"
 
             if site:
-                row_html += f"<td class='{class_name}'><a href=\"https://{lang}.wikipedia.org/wiki/{site}\">{cell}</a></td>"
+                row_html += f"<td class='{class_name}'>"
+                row_html += f'<a href="https://{lang}.wikipedia.org/wiki/{site}">{cell}</a></td>'
             else:
                 row_html += f"<td class='{class_name}'>{cell}</td>"
 
         # Wikidata is different
-        site = row.get(f"wikidata")
-        qid = row.get(f"qid")
-        gender = row.get(f"wikidata_gender")
+        site = row.get("wikidata")
+        qid = row.get("qid")
+        gender = row.get("wikidata_gender")
 
         if not site or not gender:
             cell = "wrong gender?"
@@ -310,7 +310,8 @@ def generate_comparison_table(
             class_name = "nonbinary"
 
         if qid:
-            row_html += f"<td class='{class_name}'><a href=\"https://www.wikidata.org/wiki/{qid}\">{cell}</a></td>"
+            row_html += f"<td class='{class_name}'>"
+            row_html += f'<a href="https://www.wikidata.org/wiki/{qid}">{cell}</a></td>'
         else:
             row_html += f"<td class='{class_name}'>{cell}</td>"
 
@@ -339,14 +340,16 @@ def generate_comparison_table(
 if __name__ == "__main__":
     # Wikipedia categories
     wikipedia = {}
-    for lang in LANG_CODES.keys():
+    for lang in LANG_CODES:
         projectname = f"{lang}wiki"
         wikipedia[projectname] = get_articles_from_category(CATEGORIES[lang], lang=lang)
         print(f"Articles in {LANG_CODES[lang]} category: {len(wikipedia[projectname])}")
 
     # Wikidata query
     wikidata_query = """
-    SELECT DISTINCT ?enby ?enbyLabel ?enbyDescription (group_concat(distinct ?genderLabel;separator=", ") as ?wikidata_gender) ?dewiki ?enwiki ?frwiki ?eswiki WHERE {
+    SELECT DISTINCT ?enby ?enbyLabel ?enbyDescription
+                    (group_concat(distinct ?genderLabel;separator=", ") as ?wikidata_gender)
+                    ?dewiki ?enwiki ?frwiki ?eswiki WHERE {
       ?enby wdt:P31 wd:Q5 .
       ?enby wdt:P21/wdt:P279* wd:Q48270 .
       ?enby wdt:P21 ?gender .
