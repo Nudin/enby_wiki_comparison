@@ -261,6 +261,8 @@ def generate_comparison_table(
 </thead>
 """
 
+    error_count = 0
+    error_row_count = 0
     for idx, row in table_data.iterrows():
         error = False
 
@@ -283,6 +285,7 @@ def generate_comparison_table(
                 cell = "wrong gender?"
                 class_name = "wrong"
                 error = True
+                error_count += 1
             else:
                 cell = gender
                 class_name = "nonbinary"
@@ -301,6 +304,7 @@ def generate_comparison_table(
             cell = "wrong gender?"
             class_name = "wrong"
             error = True
+            error_count += 1
         else:
             cell = gender
             class_name = "nonbinary"
@@ -312,12 +316,18 @@ def generate_comparison_table(
 
         # Close the row with a conditional class if error is true
         row_class = "error" if error else ""
+        if error:
+            error_row_count += 1
         row_html = f"<tr class='{row_class}'>{row_html}</tr>"
 
         # Append the row to the full HTML table
         html_page += row_html
 
-    html_page += """</table>
+    html_page += f"""</table>
+<h2>Summary</h2>
+<p>People found: {table_data.shape[0]}</p>
+<p>Potentials errors found: {error_count}</p>
+<p>People with Potentials errors found: {error_row_count}</p>
 </body>
 </html>"""
 
