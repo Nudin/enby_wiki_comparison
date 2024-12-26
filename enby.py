@@ -236,6 +236,10 @@ def generate_comparison_table(
     th.sorted-desc::after {
         content: " ▼";
     }
+    a {
+        color: black;
+        text-decoration: none
+    }
 </style>
 </head>
 <body>
@@ -283,10 +287,14 @@ def generate_comparison_table(
                 cell = gender
                 class_name = "nonbinary"
 
-            row_html += f"<td class='{class_name}'>{cell}</td>"
+            if site:
+                row_html += f"<td class='{class_name}'><a href=\"https://{lang}.wikipedia.org/wiki/{site}\">{cell}</a></td>"
+            else:
+                row_html += f"<td class='{class_name}'>{cell}</td>"
 
         # Wikidata is different
         site = row.get(f"wikidata")
+        qid = row.get(f"qid")
         gender = row.get(f"wikidata_gender")
 
         if not site or not gender:
@@ -297,7 +305,10 @@ def generate_comparison_table(
             cell = gender
             class_name = "nonbinary"
 
-        row_html += f"<td class='{class_name}'>{cell}</td>"
+        if qid:
+            row_html += f"<td class='{class_name}'><a href=\"https://www.wikidata.org/wiki/{qid}\">{cell}</a></td>"
+        else:
+            row_html += f"<td class='{class_name}'>{cell}</td>"
 
         # Close the row with a conditional class if error is true
         row_class = "error" if error else ""
