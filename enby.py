@@ -342,7 +342,11 @@ if __name__ == "__main__":
     wikipedia = {}
     for lang in LANG_CODES:
         projectname = f"{lang}wiki"
-        wikipedia[projectname] = get_articles_from_category(CATEGORIES[lang], lang=lang)
+        # Spanish wp has weird subcategories, so we only get the first level
+        depth = 1 if lang == "es" else 10
+        wikipedia[projectname] = get_articles_from_category(
+            CATEGORIES[lang], lang=lang, depth=depth
+        )
         print(f"Articles in {LANG_CODES[lang]} category: {len(wikipedia[projectname])}")
 
     # Wikidata query
