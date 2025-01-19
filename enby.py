@@ -123,9 +123,13 @@ def fetch_missing_wikidata_info(
     lang_code: str, missing_titles: List[str]
 ) -> List[Dict[str, str]]:
     """Fetch Wikidata information for missing articles."""
-    titles_str = " ".join(
-        f'"{title.replace('"', '\\"')}"@{lang_code}' for title in missing_titles
-    )
+
+    # Helper function for clarity
+    def format_title(title: str, lang_code: str) -> str:
+        escaped_title = title.replace('"', '\\"')  # Escape double quotes
+        return f'"{escaped_title}"@{lang_code}'
+
+    titles_str = " ".join(format_title(title, lang_code) for title in missing_titles)
     query = f"""
     SELECT DISTINCT ?item ?itemLabel ?itemDescription ?gender ?genderLabel ?dewiki ?enwiki WHERE {{
       VALUES ?enwiki {{ {titles_str} }}
