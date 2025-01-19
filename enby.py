@@ -249,6 +249,12 @@ def generate_comparison_table(
 <body>
 <h1>Comparison Table</h1>
 <p>Non-binary people on Wikipedia and Wikidata</p>
+<p>Idea: Compare the gender statement of people who are categorized as non-binary on at least one of these platforms.
+People are more likely to come out as non-binary, after first being considered male/female, then the other way around.
+Therefore is one platform declares a person as non-binary, but the other doesn't, it is more likely that
+the platform that doesn't declare the person as non-binary is wrong.
+In these cases one should check out the sources of the article to see as what the persons identifies themselves and update the sites.
+</p>
 <p>Green: Non-binary, Grey: No article, Red: Binary gender (likely Wrong?)</p>
 <p>Click on the column headers to sort the table</p>
 <input type="checkbox" id="filterCheckbox">Show only potential errors</input>
@@ -331,6 +337,7 @@ def generate_comparison_table(
 
     html_page += f"""</table>
 <h2>Summary</h2>
+<p>Date of generation: {pd.Timestamp.now()}</p>
 <p>People found: {table_data.shape[0]}</p>
 <p>Potentials errors found: {error_count}</p>
 <p>People with Potentials errors found: {error_row_count}</p>
