@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import json
+import sys
 from typing import Dict, List
 
 import numpy as np
@@ -384,10 +385,16 @@ if __name__ == "__main__":
     sparql_results = run_sparql_query(wikidata_query)
     print(f"SPARQL results: {len(sparql_results)}")
 
+    # Use sys.argv[1] as output file name if provided
+    if len(sys.argv) > 1:
+        output_html_file = sys.argv[1]
+    else:
+        output_html_file = "comparison_table.html"
     # Generate and print the comparison table
     generate_comparison_table(
         collate(
             sparql_results,
             wikipedia,
         )
+        output_html_file=output_html_file
     )
