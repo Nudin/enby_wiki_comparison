@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import json
+import os
 import sys
 from typing import Dict, List
 
@@ -156,11 +157,36 @@ def fetch_missing_wikidata_info(
     return run_sparql_query(query)
 
 
+# Function to write statistics to a file
+def write_statistics(
+    wikidata_results: List[Dict[str, str]],
+    wikis: Dict[str, List[Dict[str, str]]],
+    collated: pd.DataFrame,
+    output_file: str = "statistics.csv",
+):
+    """Write the number of items in each source to a CSV file."""
+    today = pd.Timestamp.now().strftime("%Y-%m-%d")
+    # If file does not exist, write header
+    if not os.path.exists(output_file):
+        with open(output_file, "w", encoding="utf-8") as file:
+            file.write(
+                "#date, collated, wikidata, "
+                + ", ".join(f"{LANG_CODES[lang]}wiki" for lang in LANG_CODES)
+                + "\n"
+            )
+    with open(output_file, "a", encoding="utf-8") as file:
+        file.write(
+            f"{today}, {len(collated)}, {len(wikidata_results)}, "
+            + ", ".join(str(len(wikis[project])) for project in wikis)
+            + "\n"
+        )
+
+
 # Function to generate comparison table and save as HTML
 def collate(
     wikidata_results: List[Dict[str, str]],
     wikis: Dict[str, List[Dict[str, str]]],
-) -> None:
+) -> pd.DataFrame:
     """Generate and print a table comparing category and Wikidata articles, and save as HTML."""
     wd_df = pd.DataFrame.from_dict(wikidata_results)
 
@@ -178,12 +204,27 @@ def collate(
     )
 
     merged = wd_df
+    merged["name"] = merged["wikidata"]
     for projectname, data in wikis.items():
         df = pd.DataFrame.from_dict(data)
-        merged = merged.merge(df, on=["qid", projectname], how="outer")
+        merged = merged.merge(
+            df, on="qid", how="outer", suffixes=("", f"_{projectname}")
+        )
+
+        if (
+            projectname in merged.columns
+            and f"{projectname}_{projectname}" in merged.columns
+        ):
+            merged[projectname] = merged[projectname].combine_first(
+                merged[f"{projectname}_{projectname}"]
+            )
+            merged.drop(columns=[f"{projectname}_{projectname}"], inplace=True)
+
+        merged["name"] = merged["name"].combine_first(merged[f"{projectname}"])
 
     merged.fillna(np.nan, inplace=True)
     merged.replace([np.nan], [None], inplace=True)
+    merged.sort_values(by=["name"], inplace=True)
 
     return merged
 
@@ -199,7 +240,7 @@ def generate_comparison_table(
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script src="sort.js"></script>
-<title>Comparison Table</title>
+<title>Non-binary people on Wikipedia – Comparison Table</title>
 <style>
     body {
         font-family: Arial, sans-serif;
@@ -217,15 +258,17 @@ def generate_comparison_table(
     }
     th {
         background-color: #f2f2f2;
+        position: sticky;
+        top: 0px;
     }
     .nonbinary {
-        background-color: lightgreen;
+        background-color: #d568de;
     }
     .missing {
         background-color: lightgrey;
     }
     .wrong {
-        background-color: lightcoral;
+        background-color: #f0e480;
     }
     .hidden{
         display: none;
@@ -240,6 +283,9 @@ def generate_comparison_table(
     th.sorted-desc::after {
         content: " ▼";
     }
+    tr:hover {
+        filter: contrast(1.1) drop-shadow(0 0 4px white);
+    }
     a {
         color: black;
         text-decoration: none
@@ -247,21 +293,18 @@ def generate_comparison_table(
 </style>
 </head>
 <body>
-<h1>Comparison Table</h1>
-<p>Non-binary people on Wikipedia and Wikidata</p>
+<h1>Non-binary people on Wikipedia – Comparison Table</h1>
 <p>Idea: Compare the gender statement of people who are categorized as non-binary on at least one of these platforms.
-People are more likely to come out as non-binary, after first being considered male/female, then the other way around.
-Therefore is one platform declares a person as non-binary, but the other doesn't, it is more likely that
-the platform that doesn't declare the person as non-binary is wrong.
-In these cases one should check out the sources of the article to see as what the persons identifies themselves and update the sites.
+If different platforms have different gender statement, this is likely an error that should be corrected.
+In these cases one should check the sources of the articles to see as what the persons identifies themselves and update the sites.
 </p>
-<p>Green: Non-binary, Grey: No article, Red: Binary gender (likely Wrong?)</p>
+<p>Purple: Non-binary, Grey: No article, Yellow: Binary gender (likely Wrong?)</p>
 <p>Click on the column headers to sort the table</p>
-<input type="checkbox" id="filterCheckbox">Show only potential errors</input>
+<label><input type="checkbox" id="filterCheckbox">Show only potential errors</label>
 <table>
 <thead>
 <tr>
-    <th>Title</th>
+    <th>Name</th>
 """
     for lang in LANG_CODES:
         html_page += f"<th>{LANG_CODES[lang]} Wikipedia</th>"
@@ -277,8 +320,7 @@ In these cases one should check out the sources of the article to see as what th
         error = False
 
         # Start building the row
-        keys = ["wikidata"] + [f"{lang}wiki" for lang in LANG_CODES]
-        name = next((row.get(key) for key in keys if row.get(key)), None)
+        name = row.get("name")
         row_html = f""
 
         row_html += f"<td>{name}</td>"
@@ -292,7 +334,7 @@ In these cases one should check out the sources of the article to see as what th
                 cell = "no article"
                 class_name = "missing"
             elif not gender:
-                cell = "wrong gender?"
+                cell = "binary gender?"
                 class_name = "wrong"
                 error = True
                 error_count += 1
@@ -312,7 +354,7 @@ In these cases one should check out the sources of the article to see as what th
         gender = row.get("wikidata_gender")
 
         if not site or not gender:
-            cell = "wrong gender?"
+            cell = "binary gender?"
             class_name = "wrong"
             error = True
             error_count += 1
@@ -341,6 +383,7 @@ In these cases one should check out the sources of the article to see as what th
 <p>People found: {table_data.shape[0]}</p>
 <p>Potentials errors found: {error_count}</p>
 <p>People with Potentials errors found: {error_row_count}</p>
+<p>Source Code: <a href="https://github.com/Nudin/enby_wiki_comparison">GitHub repository</a></p>
 </body>
 </html>"""
 
@@ -401,11 +444,13 @@ if __name__ == "__main__":
         output_html_file = sys.argv[1]
     else:
         output_html_file = "comparison_table.html"
+    collated = collate(sparql_results, wikipedia)
+    # Write statistics to a file
+    write_statistics(
+        wikidata_results=sparql_results, wikis=wikipedia, collated=collated
+    )
     # Generate and print the comparison table
     generate_comparison_table(
-        collate(
-            sparql_results,
-            wikipedia,
-        )
-        output_html_file=output_html_file
+        collated,
+        output_html_file=output_html_file,
     )
