@@ -321,9 +321,10 @@ In these cases one should check the sources of the articles to see as what the p
 
         # Start building the row
         name = row.get("name")
-        row_html = f""
+        desc = row.get("description") or ""
+        row_html = ""
 
-        row_html += f"<td>{name}</td>"
+        row_html += f"<td><details><summary>{name}</summary>{desc}</details></td>"
 
         for lang in LANG_CODES:
             project = f"{lang}wiki"
